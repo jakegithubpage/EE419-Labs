@@ -25,12 +25,13 @@ static void load_target(void)
     target_valid = false;
     target_uid_len = 0;
 
-    if (nvs_load_target_uid(target_uid, &target_uid_len) == ESP_OK
-        && nvs_target_is_set()) {
+    if (nvs_load_target_uid(target_uid, &target_uid_len) == ESP_OK &&
+        nvs_target_is_set()) {
         target_valid = true;
-        ESP_LOGI(TAG, "Loaded target UID (%d bytes)", target_uid_len);
+        ESP_LOGI(TAG, "Loaded existing target (%d bytes)", target_uid_len);
+        ESP_LOG_BUFFER_HEX(TAG, target_uid, target_uid_len);
     } else {
-        ESP_LOGI(TAG, "No target stored – entering learning mode");
+        ESP_LOGI(TAG, "No target in NVS → learning mode");
     }
 }
 
@@ -48,7 +49,7 @@ static void nfc_task(void *arg)
                                          I2C_NUM_0, &io));
 
     while (pn532_init(&io) != ESP_OK) {
-        ESP_LOGW(TAG, "PN532 init failed, retrying...");
+        ESP_LOGW(TAG, "PN532 init failed, retry...");
         pn532_release(&io);
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
@@ -59,46 +60,66 @@ static void nfc_task(void *arg)
         pn532_reset(&io);
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
-    ESP_LOGI(TAG, "PN532 firmware: %lu", (unsigned long)ver);
+    ESP_LOGI(TAG, "PN532 firmware OK: 0x%08lx", (unsigned long)ver);
 
     pn532_set_passive_activation_retries(&io, 0xFF);
 
+    // ---- Decide learning mode ----
     load_target();
     if (!target_valid) {
         g_learning_mode = true;
         led_set(LED_BLUE);
+        ESP_LOGI(TAG, ">>> LEARNING MODE – present a tag to set as target");
+    } else {
+        g_learning_mode = false;
+        led_set(LED_OFF);
+        ESP_LOGI(TAG, ">>> NORMAL MODE – waiting for tags");
     }
 
     while (1) {
         uint8_t uid[10] = {0};
         uint8_t uid_len = 0;
 
-        esp_err_t err = pn532_read_passive_target_id(&io,
-                            PN532_BRTY_ISO14443A_106KBPS,
-                            uid, &uid_len, 200);
+        esp_err_t err = pn532_read_passive_target_id(
+            &io, PN532_BRTY_ISO14443A_106KBPS, uid, &uid_len, 300);
 
         if (err == ESP_OK && uid_len > 0) {
             memcpy(g_current_uid, uid, uid_len);
             g_current_uid_len = uid_len;
             g_tag_present = true;
 
+            ESP_LOGI(TAG, "Tag detected (%d bytes):", uid_len);
+            ESP_LOG_BUFFER_HEX(TAG, uid, uid_len);
+
             if (g_learning_mode) {
+                // First tag becomes the target
                 nvs_save_target_uid(uid, uid_len);
                 memcpy(target_uid, uid, uid_len);
                 target_uid_len = uid_len;
                 target_valid = true;
                 g_learning_mode = false;
-                ESP_LOGI(TAG, "New target UID stored");
+
+                ESP_LOGI(TAG, ">>> TARGET SAVED");
                 led_set(LED_GREEN);
-            } else if (target_valid &&
-                       uid_equal(uid, uid_len, target_uid, target_uid_len)) {
+            }
+            else if (target_valid &&
+                     uid_equal(uid, uid_len, target_uid, target_uid_len)) {
+                ESP_LOGI(TAG, ">>> MATCH – target tag");
                 led_set(LED_GREEN);
-            } else {
+            }
+            else {
+                ESP_LOGI(TAG, ">>> DIFFERENT tag");
                 led_set(LED_RED);
             }
-        } else {
+        }
+        else {
+            // No tag
+            if (g_tag_present) {
+                ESP_LOGI(TAG, "Tag removed");
+            }
             g_tag_present = false;
             g_current_uid_len = 0;
+
             if (g_learning_mode) {
                 led_set(LED_BLUE);
             } else {
@@ -106,7 +127,7 @@ static void nfc_task(void *arg)
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(150));
     }
 }
 

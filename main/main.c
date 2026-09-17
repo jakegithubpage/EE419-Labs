@@ -10,11 +10,14 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_helpers_init());
     led_init();
 
-    // Start NFC early so learning mode can run even before Wi-Fi
+    // NFC runs independently – do not touch this
     nfc_scanner_start();
 
-    wifi_manager_start();   // blocks briefly until connected (or portal)
+    // Blocks until either connected to Wi-Fi OR portal is running
+    wifi_manager_start();
+
+    // Only reached when we have a real STA IP
     webserver_start();
 
-    ESP_LOGI("main", "System ready");
+    ESP_LOGI("main", "System ready (Wi-Fi + mDNS + web server)");
 }
