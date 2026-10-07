@@ -1,0 +1,21 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "led.c"
+        "nvs_helpers.c"
+        "wifi_manager.c"
+        "nfc_scanner.c"
+        "webserver.c"
+        "mqtt_app.c"
+    INCLUDE_DIRS "."
+    REQUIRES
+        nvs_flash
+        esp_wifi
+        esp_netif
+        esp_http_server
+        mdns
+        mqtt
+        driver
+        freertos
+        esp_timer
+)
